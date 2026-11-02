@@ -117,7 +117,8 @@ public actor EventKitStore: EventStoreProtocol {
             let predicate = store.predicateForEvents(
                 withStart: start, end: end, calendars: scoped
             )
-            return store.events(matching: predicate).map { Self.toCalendarEvent($0) }
+            let seriesStart = Self.seriesStartLookup(in: store)
+            return store.events(matching: predicate).map { Self.toCalendarEvent($0, seriesStart: seriesStart) }
         }
     }
 
@@ -128,9 +129,13 @@ public actor EventKitStore: EventStoreProtocol {
         calendarName: String,
         location: String?,
         notes: String?,
-        isAllDay: Bool
+        isAllDay: Bool,
+        recurrence: Recurrence?,
+        timeZone: TimeZone?
     ) async throws -> String {
         try await ensureAuthorized()
+        let zone = Recurrence.seriesTimeZone(timeZone, isAllDay: isAllDay)
+        try recurrence?.validate(start: startDate, timeZone: zone, isAllDay: isAllDay)
         return try await perform("create event") { store in
             guard let cal = store.calendars(for: .event)
                 .first(where: { $0.title == calendarName })
@@ -145,6 +150,14 @@ public actor EventKitStore: EventStoreProtocol {
             ev.isAllDay = isAllDay
             ev.location = location
             ev.notes = notes
+            // Only when asked: an event created without either keeps
+            // EventKit's default zone, exactly as before rules existed.
+            if recurrence != nil || timeZone != nil {
+                ev.timeZone = isAllDay ? nil : zone
+            }
+            if let recurrence {
+                ev.recurrenceRules = try [recurrence.ekRecurrenceRule(timeZone: zone, isAllDay: isAllDay)]
+            }
             try store.save(ev, span: .thisEvent, commit: true)
             return ev.eventIdentifier ?? ""
         }
@@ -159,11 +172,17 @@ public actor EventKitStore: EventStoreProtocol {
         location: String?,
         notes: String?,
         isAllDay: Bool?,
-        span: EventSpan
+        span: EventSpan,
+        recurrence: RecurrenceChange
     ) async throws {
         try await ensureAuthorized()
         try await perform("update event") { store in
             let ev = try Self.occurrence(id, in: store)
+            // A rule belongs to the series: from one occurrence it can only
+            // change for that occurrence onward. Checked before any edit.
+            if recurrence != .unchanged, ev.isRecurring, span != .futureEvents {
+                throw EventStoreError.recurrenceChangeNeedsFutureEvents(id)
+            }
             if let title {
                 ev.title = title
             }
@@ -184,6 +203,18 @@ public actor EventKitStore: EventStoreProtocol {
             }
             if let calendarName {
                 ev.calendar = try Self.moveDestination(calendarName, for: ev, in: store)
+            }
+            switch recurrence {
+            case .unchanged:
+                break
+            case let .set(rule):
+                // Validated against the edited start: the series repeats
+                // from there.
+                let zone = Recurrence.seriesTimeZone(ev.timeZone, isAllDay: ev.isAllDay)
+                try rule.validate(start: ev.startDate ?? .distantPast, timeZone: zone, isAllDay: ev.isAllDay)
+                ev.recurrenceRules = try [rule.ekRecurrenceRule(timeZone: zone, isAllDay: ev.isAllDay)]
+            case .remove:
+                ev.recurrenceRules = nil
             }
             try store.save(ev, span: Self.ekSpan(span), commit: true)
         }
@@ -237,7 +268,9 @@ public actor EventKitStore: EventStoreProtocol {
         try await ensureAuthorized()
         return try await perform("fetch event") { store in
             do {
-                return try Self.toCalendarEvent(Self.occurrence(id, in: store))
+                return try Self.toCalendarEvent(
+                    Self.occurrence(id, in: store), seriesStart: Self.seriesStartLookup(in: store)
+                )
             } catch EventStoreError.eventNotFound {
                 return nil
             }
@@ -272,8 +305,28 @@ public actor EventKitStore: EventStoreProtocol {
         }
     }
 
-    private static func toCalendarEvent(_ ev: EKEvent) -> CalendarEvent {
-        CalendarEvent(
+    /// The first occurrence's start for a series, looked up once per series
+    /// per call (a year of a daily standup is one lookup, not 365).
+    /// `event(withIdentifier:)` answers a series with its first occurrence —
+    /// the very behaviour ids must never rely on, and exactly what is wanted
+    /// here.
+    private static func seriesStartLookup(in store: EKEventStore) -> (EKEvent) -> Date? {
+        var cache: [String: Date?] = [:]
+        return { ev in
+            guard ev.hasRecurrenceRules, let identifier = ev.eventIdentifier else { return nil }
+            if let hit = cache[identifier] {
+                return hit
+            }
+            let start = store.event(withIdentifier: identifier)?.occurrenceStart
+            cache[identifier] = start
+            return start
+        }
+    }
+
+    private static func toCalendarEvent(_ ev: EKEvent, seriesStart: (EKEvent) -> Date?) -> CalendarEvent {
+        let rules = ev.recurrenceRules ?? []
+        let zone = Recurrence.seriesTimeZone(ev.timeZone, isAllDay: ev.isAllDay)
+        return CalendarEvent(
             id: EventReference.listingID(
                 eventIdentifier: ev.eventIdentifier ?? "",
                 occurrenceDate: ev.occurrenceStart,
@@ -294,7 +347,11 @@ public actor EventKitStore: EventStoreProtocol {
             // year of recurrences, and most have no attendees to fault in.
             declinedByMe: ev.hasAttendees && (ev.attendees?.contains {
                 $0.isCurrentUser && $0.participantStatus == .declined
-            } ?? false)
+            } ?? false),
+            recurrence: rules.first.map { Recurrence(ekRule: $0, timeZone: zone) },
+            timeZone: ev.timeZone?.identifier,
+            hasAdditionalRecurrenceRules: rules.count > 1,
+            seriesStartDate: seriesStart(ev)
         )
     }
 }

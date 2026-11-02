@@ -28,6 +28,12 @@ public protocol EventStoreProtocol: Sendable {
     func event(id: String) async throws -> CalendarEvent?
 
     /// Create a new event. Returns the newly assigned event ID.
+    ///
+    /// With a `recurrence`, the event becomes a series: its time zone is
+    /// set explicitly (`timeZone`, else the current zone; an all-day event
+    /// stays floating) and the rule is validated before saving. A `timeZone`
+    /// without a rule still sets the event's zone; with neither, the event
+    /// is created exactly as before.
     func createEvent(
         title: String,
         startDate: Date,
@@ -35,12 +41,20 @@ public protocol EventStoreProtocol: Sendable {
         calendarName: String,
         location: String?,
         notes: String?,
-        isAllDay: Bool
+        isAllDay: Bool,
+        recurrence: Recurrence?,
+        timeZone: TimeZone?
     ) async throws -> String
 
     /// Apply partial updates to an existing event. Any nil field is left
     /// unchanged. If `calendarName` differs from the event's current
     /// calendar, the event is moved (EventKit reassignment, not copy+delete).
+    ///
+    /// `recurrence` changes the repeat rule. On an occurrence of a series it
+    /// needs `span == .futureEvents` (else
+    /// `EventStoreError.recurrenceChangeNeedsFutureEvents`): the series is
+    /// split there and the new rule governs that occurrence onward. On a
+    /// one-off event `.set` turns it into a series with either span.
     func updateEvent(
         id: String,
         title: String?,
@@ -50,7 +64,8 @@ public protocol EventStoreProtocol: Sendable {
         location: String?,
         notes: String?,
         isAllDay: Bool?,
-        span: EventSpan
+        span: EventSpan,
+        recurrence: RecurrenceChange
     ) async throws
 
     /// Throw what `updateEvent` would for moving `id` to `calendarName` —
@@ -61,6 +76,55 @@ public protocol EventStoreProtocol: Sendable {
 
     /// Delete an event by ID.
     func deleteEvent(id: String, span: EventSpan) async throws
+}
+
+public extension EventStoreProtocol {
+    /// ``createEvent(title:startDate:endDate:calendarName:location:notes:isAllDay:recurrence:timeZone:)``
+    /// without a rule or zone — a one-off event, as before rules existed.
+    func createEvent(
+        title: String,
+        startDate: Date,
+        endDate: Date,
+        calendarName: String,
+        location: String?,
+        notes: String?,
+        isAllDay: Bool
+    ) async throws -> String {
+        try await createEvent(
+            title: title, startDate: startDate, endDate: endDate, calendarName: calendarName,
+            location: location, notes: notes, isAllDay: isAllDay, recurrence: nil, timeZone: nil
+        )
+    }
+
+    /// ``updateEvent(id:title:startDate:endDate:calendarName:location:notes:isAllDay:span:recurrence:)``
+    /// leaving the repeat rule alone.
+    func updateEvent(
+        id: String,
+        title: String?,
+        startDate: Date?,
+        endDate: Date?,
+        calendarName: String?,
+        location: String?,
+        notes: String?,
+        isAllDay: Bool?,
+        span: EventSpan
+    ) async throws {
+        try await updateEvent(
+            id: id, title: title, startDate: startDate, endDate: endDate, calendarName: calendarName,
+            location: location, notes: notes, isAllDay: isAllDay, span: span, recurrence: .unchanged
+        )
+    }
+}
+
+/// What an update does to an event's repeat rule.
+public enum RecurrenceChange: Sendable, Equatable, Hashable {
+    /// Leave the rule (or its absence) as it is.
+    case unchanged
+    /// Replace the rule — or add one, turning a one-off event into a series.
+    case set(Recurrence)
+    /// Remove the rule. From an occurrence (span `.futureEvents`), that
+    /// occurrence becomes a one-off and the series ends before it.
+    case remove
 }
 
 /// Errors the store can raise into the service layer.
@@ -77,4 +141,8 @@ public enum EventStoreError: Error, Equatable, Sendable {
     case crossAccountMove(from: String, fromAccount: String, to: String, toAccount: String)
     case recurringEventNeedsOccurrence(String)
     case occurrenceNotFound(id: String)
+    /// A repeat-rule change on an occurrence of a series with span
+    /// `.thisEvent`. A rule belongs to the series, so it can only change
+    /// from an occurrence onward (`.futureEvents`).
+    case recurrenceChangeNeedsFutureEvents(String)
 }

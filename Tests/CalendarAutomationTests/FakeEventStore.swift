@@ -26,7 +26,10 @@ final class FakeEventStore: EventStoreProtocol, LockedFake {
         var eventsCalls: [EventsCall] = []
         var createdEvents: [CalendarEvent] = []
         var updates: [
-            (id: String, calendarName: String?, startDate: Date?, endDate: Date?, isAllDay: Bool?, span: EventSpan)
+            (
+                id: String, calendarName: String?, startDate: Date?, endDate: Date?, isAllDay: Bool?,
+                span: EventSpan, recurrence: RecurrenceChange
+            )
         ] = []
         var deletes: [(id: String, span: EventSpan)] = []
 
@@ -84,7 +87,9 @@ final class FakeEventStore: EventStoreProtocol, LockedFake {
         calendarName: String,
         location: String?,
         notes: String?,
-        isAllDay: Bool
+        isAllDay: Bool,
+        recurrence: Recurrence?,
+        timeZone: TimeZone?
     ) async throws -> String {
         try state.withLock { s in
             try s.requireAuthorized()
@@ -95,7 +100,8 @@ final class FakeEventStore: EventStoreProtocol, LockedFake {
             let ev = CalendarEvent(
                 id: id, title: title, location: location, notes: notes,
                 startDate: startDate, endDate: endDate,
-                calendarName: calendarName, isAllDay: isAllDay
+                calendarName: calendarName, isAllDay: isAllDay, isRecurring: recurrence != nil,
+                recurrence: recurrence, timeZone: timeZone?.identifier
             )
             s.eventsByCalendar[calendarName, default: []].append(ev)
             s.createdEvents.append(ev)
@@ -112,7 +118,8 @@ final class FakeEventStore: EventStoreProtocol, LockedFake {
         location _: String?,
         notes _: String?,
         isAllDay: Bool?,
-        span: EventSpan
+        span: EventSpan,
+        recurrence: RecurrenceChange
     ) async throws {
         try state.withLock { s in
             try s.requireAuthorized()
@@ -121,7 +128,8 @@ final class FakeEventStore: EventStoreProtocol, LockedFake {
             }
             s.updates.append((
                 id: id, calendarName: calendarName,
-                startDate: startDate, endDate: endDate, isAllDay: isAllDay, span: span
+                startDate: startDate, endDate: endDate, isAllDay: isAllDay, span: span,
+                recurrence: recurrence
             ))
         }
     }
