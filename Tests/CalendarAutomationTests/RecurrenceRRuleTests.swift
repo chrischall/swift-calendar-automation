@@ -123,6 +123,14 @@ struct RecurrenceParseTests {
         #expect(parseError("FREQ=WEEKLY;DTSTART=20261109") == .unsupportedPart("DTSTART"))
     }
 
+    @Test("only a leading property name counts as a prefix: a colon inside a value is not one")
+    func colonInsideValue() {
+        #expect(parseError("FREQ=DAILY;X-FOO=a:b") == .unsupportedPart("X-FOO"))
+        #expect(parseError("FREQ=DAILY;BYFOO=a:b") == .unknownPart("BYFOO"))
+        #expect(parseError("rrule:FREQ=DAILY;X-FOO=a:b") == .unsupportedPart("X-FOO"))
+        #expect(parseError("X-WR-RULE:FREQ=DAILY") == .notAnRRule(property: "X-WR-RULE"))
+    }
+
     @Test("unsupported frequencies are named", arguments: ["SECONDLY", "MINUTELY", "HOURLY"])
     func subDaily(freq: String) {
         #expect(parseError("FREQ=\(freq)") == .unsupportedFrequency(freq))

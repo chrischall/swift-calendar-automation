@@ -19,9 +19,17 @@ private func dateTime(_ y: Int, _ m: Int, _ d: Int, _ h: Int, _ mi: Int, _ s: In
 struct RecurrenceEventKitTests {
     // MARK: Recurrence → EKRecurrenceRule
 
+    @Test("an until with no date throws instead of silently writing an endless series")
+    func untilWithoutDateThrows() {
+        let rule = Recurrence(frequency: .daily, end: .until(DateComponents(hour: 9, minute: 0, second: 0)))
+        #expect(throws: RecurrenceError.invalidUntil("0000-00-00T09:00:00")) {
+            try rule.ekRecurrenceRule(timeZone: newYork, isAllDay: false)
+        }
+    }
+
     @Test("weekly rule: frequency, interval and plain days")
-    func weeklyToEK() {
-        let rule = Recurrence(frequency: .weekly, interval: 2, daysOfWeek: [.init(.MO), .init(.WE)])
+    func weeklyToEK() throws {
+        let rule = try Recurrence(frequency: .weekly, interval: 2, daysOfWeek: [.init(.MO), .init(.WE)])
             .ekRecurrenceRule(timeZone: newYork, isAllDay: false)
         #expect(rule.frequency == .weekly)
         #expect(rule.interval == 2)
@@ -31,20 +39,20 @@ struct RecurrenceEventKitTests {
     }
 
     @Test("ordinal days carry their week number")
-    func ordinalDays() {
-        let rule = Recurrence(frequency: .monthly, daysOfWeek: [.init(.TU, ordinal: 2), .init(.FR, ordinal: -1)])
+    func ordinalDays() throws {
+        let rule = try Recurrence(frequency: .monthly, daysOfWeek: [.init(.TU, ordinal: 2), .init(.FR, ordinal: -1)])
             .ekRecurrenceRule(timeZone: newYork, isAllDay: false)
         #expect(rule.daysOfTheWeek?.map(\.dayOfTheWeek) == [.tuesday, .friday])
         #expect(rule.daysOfTheWeek?.map(\.weekNumber) == [2, -1])
     }
 
     @Test("numeric BY parts map one for one")
-    func numericParts() {
-        let monthly = Recurrence(frequency: .monthly, daysOfMonth: [1, -1])
+    func numericParts() throws {
+        let monthly = try Recurrence(frequency: .monthly, daysOfMonth: [1, -1])
             .ekRecurrenceRule(timeZone: newYork, isAllDay: false)
         #expect(monthly.daysOfTheMonth == [1, -1])
 
-        let yearly = Recurrence(
+        let yearly = try Recurrence(
             frequency: .yearly, monthsOfYear: [3, 9], weeksOfYear: [10, -1], daysOfYear: [100, -1],
             setPositions: [1, -1]
         ).ekRecurrenceRule(timeZone: newYork, isAllDay: false)
@@ -55,37 +63,45 @@ struct RecurrenceEventKitTests {
     }
 
     @Test("count becomes an occurrence-count end")
-    func countEnd() {
-        let rule = Recurrence(frequency: .daily, end: .count(10)).ekRecurrenceRule(timeZone: newYork, isAllDay: false)
+    func countEnd() throws {
+        let rule = try Recurrence(frequency: .daily, end: .count(10)).ekRecurrenceRule(
+            timeZone: newYork,
+            isAllDay: false
+        )
         #expect(rule.recurrenceEnd?.occurrenceCount == 10)
         #expect(rule.recurrenceEnd?.endDate == nil)
     }
 
     @Test("a date-only until ends at 23:59:59 local that day, in the event's zone")
-    func dateOnlyUntil() {
-        let rule = Recurrence(frequency: .weekly, end: .until(day(2027, 5, 3)))
+    func dateOnlyUntil() throws {
+        let rule = try Recurrence(frequency: .weekly, end: .until(day(2027, 5, 3)))
             .ekRecurrenceRule(timeZone: newYork, isAllDay: false)
         #expect(rule.recurrenceEnd?.endDate == fixtureDate("2027-05-03T23:59:59", timeZone: newYork))
     }
 
     @Test("a date-time until ends at that local wall-clock instant")
-    func dateTimeUntil() {
-        let rule = Recurrence(frequency: .weekly, end: .until(dateTime(2027, 5, 3, 15, 30, 0)))
+    func dateTimeUntil() throws {
+        let rule = try Recurrence(frequency: .weekly, end: .until(dateTime(2027, 5, 3, 15, 30, 0)))
             .ekRecurrenceRule(timeZone: newYork, isAllDay: false)
         #expect(rule.recurrenceEnd?.endDate == fixtureDate("2027-05-03T15:30:00", timeZone: newYork))
     }
 
     @Test("an all-day series ends at the end of its until day, even with a time given")
-    func allDayUntil() {
-        let rule = Recurrence(frequency: .daily, end: .until(dateTime(2027, 5, 3, 9, 0, 0)))
+    func allDayUntil() throws {
+        let rule = try Recurrence(frequency: .daily, end: .until(dateTime(2027, 5, 3, 9, 0, 0)))
             .ekRecurrenceRule(timeZone: newYork, isAllDay: true)
         #expect(rule.recurrenceEnd?.endDate == fixtureDate("2027-05-03T23:59:59", timeZone: newYork))
     }
 
     @Test("a non-Monday week start is written; Monday (the RFC default) is left implicit")
-    func weekStartWritten() {
-        let sunday = Recurrence(frequency: .weekly, interval: 2, daysOfWeek: [.init(.MO), .init(.SU)], weekStart: .SU)
-            .ekRecurrenceRule(timeZone: newYork, isAllDay: false)
+    func weekStartWritten() throws {
+        let sunday = try Recurrence(
+            frequency: .weekly,
+            interval: 2,
+            daysOfWeek: [.init(.MO), .init(.SU)],
+            weekStart: .SU
+        )
+        .ekRecurrenceRule(timeZone: newYork, isAllDay: false)
         #expect(sunday.firstDayOfTheWeek == 1)
     }
 
@@ -150,14 +166,14 @@ struct RecurrenceEventKitTests {
         Recurrence(frequency: .yearly, monthsOfYear: [3]),
         Recurrence(frequency: .yearly, interval: 2, daysOfWeek: [.init(.SU, ordinal: 2)], monthsOfYear: [3]),
     ])
-    func roundTrip(rule: Recurrence) {
-        let ek = rule.ekRecurrenceRule(timeZone: newYork, isAllDay: false)
+    func roundTrip(rule: Recurrence) throws {
+        let ek = try rule.ekRecurrenceRule(timeZone: newYork, isAllDay: false)
         #expect(Recurrence(ekRule: ek, timeZone: newYork) == rule)
     }
 
     @Test("the RRULE of a read-back rule matches EventKit's own, part for part")
     func rruleMatchesEventKit() throws {
-        let ek = Recurrence(frequency: .monthly, interval: 2, daysOfWeek: [.init(.TU, ordinal: 2)], end: .count(5))
+        let ek = try Recurrence(frequency: .monthly, interval: 2, daysOfWeek: [.init(.TU, ordinal: 2)], end: .count(5))
             .ekRecurrenceRule(timeZone: newYork, isAllDay: false)
         let ours = Set(Recurrence(ekRule: ek, timeZone: newYork).rruleString(timeZone: newYork).split(separator: ";"))
         // EventKit's description: "EKRecurrenceRule <0x…> RRULE FREQ=…;…".

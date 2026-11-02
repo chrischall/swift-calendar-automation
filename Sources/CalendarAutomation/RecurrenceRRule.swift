@@ -18,7 +18,12 @@ public extension Recurrence {
     static func parse(rrule raw: String, timeZone: TimeZone) throws(RecurrenceError) -> Recurrence {
         guard !raw.unicodeScalars.contains(where: CharacterSet.newlines.contains) else { throw .multipleLines }
         var body = Substring(raw.trimmingCharacters(in: .whitespaces))
-        if let colon = body.firstIndex(of: ":") {
+        // A property prefix is a bare name before the first colon
+        // (`RRULE:`, `DTSTART:`). A colon after an `=` or `;` is inside a
+        // value (`X-FOO=a:b`) and is left to the part checks below.
+        if let colon = body.firstIndex(of: ":"),
+           body[..<colon].wholeMatch(of: /[A-Za-z][A-Za-z0-9-]*/) != nil
+        {
             let property = body[..<colon]
             guard property.uppercased() == "RRULE" else { throw .notAnRRule(property: property.uppercased()) }
             body = body[body.index(after: colon)...]

@@ -276,21 +276,17 @@ private struct Expansion {
         func onWeekdays(_ d: CivilDay) -> Bool { weekdays?.contains(d.weekdayIndex) ?? true }
 
         if let daysOfYear = rule.daysOfYear {
+            // BYWEEKNO narrows BYYEARDAY (RFC 5545 applies both): keep only
+            // the days that fall in one of those weeks.
+            let inWeeks = rule.weeksOfYear.map { Set(weekDays($0, year: y).map(\.number)) }
             return daysOfYear.compactMap { n -> CivilDay? in
                 let d = n > 0 ? n : length + n + 1
                 return (1 ... length).contains(d) ? jan1 + (d - 1) : nil
-            }.filter { inMonths($0) && onWeekdays($0) }
+            }.filter { inMonths($0) && onWeekdays($0) && (inWeeks?.contains($0.number) ?? true) }
         }
         if let weeks = rule.weeksOfYear {
-            let week1 = weekOneStart(y)
-            let count = (weekOneStart(y + 1).number - week1.number) / 7
             let wanted = weekdays ?? [startDay.weekdayIndex]
-            return weeks.flatMap { n -> [CivilDay] in
-                let w = n > 0 ? n : count + n + 1
-                guard (1 ... count).contains(w) else { return [] }
-                let first = week1 + 7 * (w - 1)
-                return (0 ..< 7).map { first + $0 }.filter { wanted.contains($0.weekdayIndex) }
-            }.filter(inMonths)
+            return weekDays(weeks, year: y).filter { wanted.contains($0.weekdayIndex) && inMonths($0) }
         }
         let monthList = rule.monthsOfYear ?? (rule.daysOfWeek == nil && rule.daysOfMonth == nil
             ? [startDay.civil.month] : Array(1 ... 12))
@@ -314,6 +310,19 @@ private struct Expansion {
             let first = CivilDay(y, m, 1)
             let len = RecurrenceDates.daysInMonth(m, y)
             return resolveDaysOfMonth(rule.daysOfMonth ?? [startDay.civil.day], first: first, length: len)
+        }
+    }
+
+    /// Every day of the given `BYWEEKNO` weeks of year `y` (±1…53; a week
+    /// the year doesn't have is skipped), in the order the weeks are listed.
+    func weekDays(_ weeks: [Int], year y: Int) -> [CivilDay] {
+        let week1 = weekOneStart(y)
+        let count = (weekOneStart(y + 1).number - week1.number) / 7
+        return weeks.flatMap { n -> [CivilDay] in
+            let w = n > 0 ? n : count + n + 1
+            guard (1 ... count).contains(w) else { return [] }
+            let first = week1 + 7 * (w - 1)
+            return (0 ..< 7).map { first + $0 }
         }
     }
 

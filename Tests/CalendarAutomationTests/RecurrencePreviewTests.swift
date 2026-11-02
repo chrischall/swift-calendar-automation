@@ -254,6 +254,16 @@ struct RecurrencePreviewTests {
         ])
     }
 
+    @Test("yearly by day of year narrowed by week number: only the days that fall in those weeks")
+    func yearlyDayOfYearInWeeks() {
+        // Day 100 is Sat 2027-04-10 (ISO week 14) and Sun 2028-04-09 (ISO week 14);
+        // day 101 is Sun 2027-04-11 (week 14) and Mon 2028-04-10 (week 15); 2029-2032 fall in week 15.
+        let r = Recurrence(frequency: .yearly, weeksOfYear: [14], daysOfYear: [100, 101])
+        #expect(firstLocal(r, "2027-04-10T09:00", limit: 4) == [
+            "2027-04-10T09:00", "2027-04-11T09:00", "2028-04-09T09:00", "2033-04-10T09:00",
+        ])
+    }
+
     @Test("a rule that never matches again yields only the start, and terminates")
     func neverMatches() {
         // 2026 + 400k is never a leap year, so day 366 never comes; the open-ended scan still stops.

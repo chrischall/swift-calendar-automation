@@ -73,14 +73,16 @@ public extension Recurrence {
     }
 
     /// The EventKit rule for this recurrence. Validate first
-    /// (``validate(start:timeZone:isAllDay:)``); this maps, it doesn't check.
+    /// (``validate(start:timeZone:isAllDay:)``); this maps, it doesn't check —
+    /// except that an `until` with no date throws ``RecurrenceError/invalidUntil(_:)``
+    /// rather than becoming a series that never ends.
     ///
     /// - Parameters:
     ///   - timeZone: the event's zone (the current zone for a floating or
     ///     all-day event); `until` is wall clock in it.
     ///   - isAllDay: an all-day series ends at the end of its `until` day,
     ///     even when `until` carries a time.
-    func ekRecurrenceRule(timeZone: TimeZone, isAllDay: Bool) -> EKRecurrenceRule {
+    func ekRecurrenceRule(timeZone: TimeZone, isAllDay: Bool) throws(RecurrenceError) -> EKRecurrenceRule {
         let ekFrequency: EKRecurrenceFrequency = switch frequency {
         case .daily: .daily
         case .weekly: .weekly
@@ -96,7 +98,7 @@ public extension Recurrence {
                 ) }
             }
         }
-        let rule = EKRecurrenceRule(
+        let rule = try EKRecurrenceRule(
             recurrenceWith: ekFrequency,
             interval: interval,
             daysOfTheWeek: days,
@@ -119,7 +121,7 @@ public extension Recurrence {
         return rule
     }
 
-    private func ekEnd(timeZone: TimeZone, isAllDay: Bool) -> EKRecurrenceEnd? {
+    private func ekEnd(timeZone: TimeZone, isAllDay: Bool) throws(RecurrenceError) -> EKRecurrenceEnd? {
         switch end {
         case nil:
             return nil
@@ -131,7 +133,11 @@ public extension Recurrence {
             } else {
                 c
             }
-            guard let instant = RecurrenceDates.instant(local, in: timeZone) else { return nil }
+            // Nil only when the components lack a date. Returning no end
+            // here would write an endless series, so refuse instead.
+            guard let instant = RecurrenceDates.instant(local, in: timeZone) else {
+                throw .invalidUntil(RecurrenceDates.display(c))
+            }
             return EKRecurrenceEnd(end: instant)
         }
     }

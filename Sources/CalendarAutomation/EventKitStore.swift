@@ -156,7 +156,7 @@ public actor EventKitStore: EventStoreProtocol {
                 ev.timeZone = isAllDay ? nil : zone
             }
             if let recurrence {
-                ev.recurrenceRules = [recurrence.ekRecurrenceRule(timeZone: zone, isAllDay: isAllDay)]
+                ev.recurrenceRules = try [recurrence.ekRecurrenceRule(timeZone: zone, isAllDay: isAllDay)]
             }
             try store.save(ev, span: .thisEvent, commit: true)
             return ev.eventIdentifier ?? ""
@@ -212,7 +212,7 @@ public actor EventKitStore: EventStoreProtocol {
                 // from there.
                 let zone = Recurrence.seriesTimeZone(ev.timeZone, isAllDay: ev.isAllDay)
                 try rule.validate(start: ev.startDate ?? .distantPast, timeZone: zone, isAllDay: ev.isAllDay)
-                ev.recurrenceRules = [rule.ekRecurrenceRule(timeZone: zone, isAllDay: ev.isAllDay)]
+                ev.recurrenceRules = try [rule.ekRecurrenceRule(timeZone: zone, isAllDay: ev.isAllDay)]
             case .remove:
                 ev.recurrenceRules = nil
             }
