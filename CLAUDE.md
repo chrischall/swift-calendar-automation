@@ -31,6 +31,7 @@ EventKit wrapper consumed by apple-swift-mcp's calendar tools. Everything a cons
 - `CalendarService` — the public entry point. Defaults (calendar-name resolution via `defaultCalendar`), date-range guards, search filtering, sorting and paging (`CalendarEventPage`), free time.
 - `EventStoreProtocol` + `EventKitStore` — the store seam. `EventKitStore` is an actor over `EKEventStore`; every synchronous EventKit call runs on a `BlockingWorkQueue` (off the cooperative pool, serial, 30s bound → `EventStoreError.timedOut`). Tests inject `FakeEventStore`.
 - `OccurrenceID` / `EventReference` / `OccurrenceResolver` (`EventOccurrence.swift`, `OccurrenceID.swift`) — ids for occurrences of recurring series and resolving them back to one `EKEvent`.
+- `Recurrence` (`Recurrence*.swift`) — pure repeat-rule model, no EventKit: `Recurrence.Input` (tool JSON) → `resolve()`, `parse(rrule:timeZone:)` / `rruleString(timeZone:)`, `validate(start:timeZone:isAllDay:)`, `normalized`. Parsing/decoding are syntax-only (every part is read or refused by name, never dropped); ranges and frequency combinations live in `validate`, so any stored rule can be represented. `until` is local wall clock in the event's zone; `RecurrenceDates` is its internal date helper — not a general parser.
 - `FreeTimeFinder` — pure free-time arithmetic (busy rules, merging, working hours per wall-clock day).
 - `CalendarTestFixture` — `#if DEBUG` only; creates/deletes `AppleSwiftMCPTest-*` calendars.
 
