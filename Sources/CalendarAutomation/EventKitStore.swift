@@ -134,7 +134,7 @@ public actor EventKitStore: EventStoreProtocol {
         timeZone: TimeZone?
     ) async throws -> String {
         try await ensureAuthorized()
-        let zone = CalendarService.seriesZone(timeZone, isAllDay: isAllDay)
+        let zone = Recurrence.seriesTimeZone(timeZone, isAllDay: isAllDay)
         try recurrence?.validate(start: startDate, timeZone: zone, isAllDay: isAllDay)
         return try await perform("create event") { store in
             guard let cal = store.calendars(for: .event)
@@ -210,7 +210,7 @@ public actor EventKitStore: EventStoreProtocol {
             case let .set(rule):
                 // Validated against the edited start: the series repeats
                 // from there.
-                let zone = CalendarService.seriesZone(ev.timeZone, isAllDay: ev.isAllDay)
+                let zone = Recurrence.seriesTimeZone(ev.timeZone, isAllDay: ev.isAllDay)
                 try rule.validate(start: ev.startDate ?? .distantPast, timeZone: zone, isAllDay: ev.isAllDay)
                 ev.recurrenceRules = [rule.ekRecurrenceRule(timeZone: zone, isAllDay: ev.isAllDay)]
             case .remove:
@@ -325,7 +325,7 @@ public actor EventKitStore: EventStoreProtocol {
 
     private static func toCalendarEvent(_ ev: EKEvent, seriesStart: (EKEvent) -> Date?) -> CalendarEvent {
         let rules = ev.recurrenceRules ?? []
-        let zone = CalendarService.seriesZone(ev.timeZone, isAllDay: ev.isAllDay)
+        let zone = Recurrence.seriesTimeZone(ev.timeZone, isAllDay: ev.isAllDay)
         return CalendarEvent(
             id: EventReference.listingID(
                 eventIdentifier: ev.eventIdentifier ?? "",

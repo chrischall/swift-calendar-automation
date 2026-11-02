@@ -17,9 +17,9 @@ which uses it for its calendar tools.
 ## Install
 
 ```swift
-// Package.swift
+// Package.swift — use the latest release from the Releases page
 dependencies: [
-    .package(url: "https://github.com/chrischall/swift-calendar-automation.git", from: "0.1.0"),
+    .package(url: "https://github.com/chrischall/swift-calendar-automation.git", from: "<latest release>"),
 ]
 ```
 

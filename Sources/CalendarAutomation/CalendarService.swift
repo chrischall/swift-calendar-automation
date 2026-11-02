@@ -173,7 +173,7 @@ public struct CalendarService: Sendable {
             )
         }
         try recurrence?.validate(
-            start: startDate, timeZone: Self.seriesZone(timeZone, isAllDay: isAllDay), isAllDay: isAllDay
+            start: startDate, timeZone: Recurrence.seriesTimeZone(timeZone, isAllDay: isAllDay), isAllDay: isAllDay
         )
         let resolved = calendarName?.trimmingCharacters(in: .whitespaces).nonEmpty
             ?? defaultCalendar?.trimmingCharacters(in: .whitespaces).nonEmpty
@@ -186,12 +186,6 @@ public struct CalendarService: Sendable {
             throw EventStoreError.calendarNotFound(target)
         }
         return target
-    }
-
-    /// The zone a series' rule is read in: the event's, or the current zone
-    /// for a floating (incl. every all-day) event. Shared with the store.
-    static func seriesZone(_ timeZone: TimeZone?, isAllDay: Bool) -> TimeZone {
-        isAllDay ? .current : timeZone ?? .current
     }
 
     /// Throw what `updateEvent` would for moving `id` to `calendarName`
@@ -275,7 +269,7 @@ public struct CalendarService: Sendable {
         }
         if case let .set(rule) = recurrence {
             let allDay = isAllDay ?? current.isAllDay
-            let zone = Self.seriesZone(current.timeZone.flatMap(TimeZone.init(identifier:)), isAllDay: allDay)
+            let zone = Recurrence.seriesTimeZone(current.timeZone.flatMap(TimeZone.init(identifier:)), isAllDay: allDay)
             try rule.validate(start: startDate ?? current.startDate, timeZone: zone, isAllDay: allDay)
         }
     }

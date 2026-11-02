@@ -14,7 +14,9 @@ public extension Recurrence {
     /// local wall clock in the event's time zone, inclusive, with no offset.
     /// Decoding keeps the raw values; ``resolve()`` turns them into a
     /// ``Recurrence``, refusing unknown fields rather than ignoring them.
-    struct Input: Decodable, Sendable, Equatable {
+    /// Encoding writes only the fields that are set, so a rule read back
+    /// (``Recurrence/input``) is the same JSON a caller would pass.
+    struct Input: Codable, Sendable, Equatable {
         public var frequency: String
         public var interval: Int?
         public var daysOfWeek: [String]?
@@ -26,7 +28,9 @@ public extension Recurrence {
         public var weekStart: String?
         public var until: String?
         public var count: Int?
-        /// JSON keys this shape doesn't have, in order; `resolve` refuses them.
+        /// JSON keys this shape doesn't have, sorted by name (so the one
+        /// `resolve` reports first doesn't depend on the decoder's key
+        /// order); `resolve` refuses them. Never encoded.
         var unknownFields: [String] = []
 
         public init(
@@ -84,6 +88,21 @@ public extension Recurrence {
                 .map(\.stringValue)
                 .filter { CodingKeys(stringValue: $0) == nil }
                 .sorted()
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(frequency, forKey: .frequency)
+            try c.encodeIfPresent(interval, forKey: .interval)
+            try c.encodeIfPresent(daysOfWeek, forKey: .daysOfWeek)
+            try c.encodeIfPresent(daysOfMonth, forKey: .daysOfMonth)
+            try c.encodeIfPresent(monthsOfYear, forKey: .monthsOfYear)
+            try c.encodeIfPresent(weeksOfYear, forKey: .weeksOfYear)
+            try c.encodeIfPresent(daysOfYear, forKey: .daysOfYear)
+            try c.encodeIfPresent(setPositions, forKey: .setPositions)
+            try c.encodeIfPresent(weekStart, forKey: .weekStart)
+            try c.encodeIfPresent(until, forKey: .until)
+            try c.encodeIfPresent(count, forKey: .count)
         }
 
         /// The ``Recurrence`` this input describes. Throws for unknown
@@ -155,5 +174,38 @@ public extension Recurrence {
             else { throw .invalidUntil(value) }
             return RecurrenceDates.dateTime(y, mo, d, h, mi, s)
         }
+    }
+}
+
+public extension Recurrence {
+    /// The rule in the shape a tool takes it as input (``Input``), so a rule
+    /// read back can be passed straight to create/update:
+    /// `try decode(encode(r.input)).resolve() == r`.
+    ///
+    /// Lists and the week start are spelled as `RRULE` does (`"2TU"`,
+    /// `"SU"`), the frequency in lower case, `interval` is omitted when 1,
+    /// and `until` is local wall clock in the series' zone with no offset:
+    /// `2027-05-03`, or `2027-05-03T15:30:00` when it carries a time.
+    var input: Input {
+        var until: String?
+        var count: Int?
+        switch end {
+        case let .until(c): until = RecurrenceDates.display(c)
+        case let .count(n): count = n
+        case nil: break
+        }
+        return Input(
+            frequency: frequency.rawValue,
+            interval: interval == 1 ? nil : interval,
+            daysOfWeek: daysOfWeek?.map(\.string),
+            daysOfMonth: daysOfMonth,
+            monthsOfYear: monthsOfYear,
+            weeksOfYear: weeksOfYear,
+            daysOfYear: daysOfYear,
+            setPositions: setPositions,
+            weekStart: weekStart?.rawValue,
+            until: until,
+            count: count
+        )
     }
 }

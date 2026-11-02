@@ -180,6 +180,19 @@ public struct Recurrence: Sendable, Equatable, Hashable, Codable {
         self.end = end
     }
 
+    /// The zone a series' rule is read in — the zone its `until` is wall
+    /// clock in and its occurrences are expanded in: the event's own zone,
+    /// or the current zone for a floating event and for every all-day event
+    /// (all-day events are floating; they are shown in whatever zone the
+    /// user is in).
+    ///
+    /// - Parameters:
+    ///   - timeZone: the event's zone; nil for a floating event.
+    ///   - isAllDay: whether the event is all-day.
+    public static func seriesTimeZone(_ timeZone: TimeZone?, isAllDay: Bool) -> TimeZone {
+        isAllDay ? .current : timeZone ?? .current
+    }
+
     /// The rule with implied parts made explicit: a weekly rule with no
     /// `daysOfWeek` repeats on the start's weekday (in `timeZone`), so that
     /// day is filled in. Everything else is returned unchanged.

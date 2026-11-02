@@ -22,17 +22,17 @@ public struct CalendarEvent: Equatable, Sendable {
     public let declinedByMe: Bool
     /// The series' repeat rule (EventKit's first rule), nil for a one-off
     /// event. Set on every occurrence of a series.
-    public var recurrence: Recurrence?
+    public let recurrence: Recurrence?
     /// The event's time zone identifier; nil for a floating event (all-day
     /// events are floating). `until` in ``recurrence`` is wall clock in it.
-    public var timeZone: String?
+    public let timeZone: String?
     /// EventKit holds more than one rule for this series; ``recurrence`` is
     /// only the first. Other apps can write several; this library never does.
-    public var hasAdditionalRecurrenceRules: Bool
+    public let hasAdditionalRecurrenceRules: Bool
     /// The start of the series' first occurrence, for a recurring event —
     /// what the rule's count and until are measured from. Nil when unknown
     /// or for a one-off event.
-    public var seriesStartDate: Date?
+    public let seriesStartDate: Date?
 
     public init(
         id: String,
@@ -74,10 +74,12 @@ public struct CalendarEvent: Equatable, Sendable {
 }
 
 public extension CalendarEvent {
-    /// The zone ``recurrence`` is read in: the event's own, or the current
-    /// zone for a floating event (which is where it is shown).
+    /// The zone ``recurrence`` is read in
+    /// (``Recurrence/seriesTimeZone(_:isAllDay:)``): the event's own, or the
+    /// current zone for a floating or all-day event (which is where it is
+    /// shown).
     var recurrenceTimeZone: TimeZone {
-        timeZone.flatMap(TimeZone.init(identifier:)) ?? .current
+        Recurrence.seriesTimeZone(timeZone.flatMap(TimeZone.init(identifier:)), isAllDay: isAllDay)
     }
 
     /// ``recurrence`` as a canonical `RRULE` value, nil for a one-off event.
