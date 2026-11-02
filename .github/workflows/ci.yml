@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  pull_request:
+    # `labeled` so arming ready-to-merge / release-ready triggers the deferred run.
+    types: [opened, synchronize, reopened, labeled]
+  workflow_call: # reusable by tag-and-bump.yml and release.yml
+
+# statuses: write is load-bearing: the gate and the final step post the
+# `ci-gated` commit status (the ruleset's required check), and
+# dependabot-triggered runs are read-only unless permissions are explicit.
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  ci:
+    # The fleet's shared self-hosted Mac, like every other Apple repo: hosted
+    # macOS slots are few, and CodeQL Swift saturating them has starved the
+    # required `ci-gated` check before.
+    # This repo is PUBLIC and this job runs on the shared self-hosted Mac:
+    # never run a fork's code there. Fork PRs skip the job (ci-gated stays
+    # unreported, so they still can't merge), and the repo also requires
+    # approval for every external contributor's workflow run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 10
+    steps:
+      # Deferred-merge gate (shared with the fleet), status mode: CI is
+      # deferred until auto-review arms the PR with `ready-to-merge`. An
+      # un-armed PR is blocked by a yellow `ci-gated: pending` COMMIT STATUS —
+      # this job stays green, so red runs only ever mean real failures.
+      # MUST be first; every step below carries the `run` guard.
+      - uses: chrischall/workflows/.github/actions/arm-gate@main
+        id: gate
+        with:
+          mode: status
+
+      - uses: actions/checkout@v7
+        if: steps.gate.outputs.run == 'true'
+      # DEVELOPER_DIR, not `sudo xcode-select`: the self-hosted runner has no
+      # passwordless sudo, and a job-scoped env var leaves the machine's global
+      # Xcode selection alone.
+      - name: Select Xcode
+        if: steps.gate.outputs.run == 'true'
+        run: echo "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Swift version
+        if: steps.gate.outputs.run == 'true'
+        run: swift --version
+      - name: Build
+        if: steps.gate.outputs.run == 'true'
+        run: swift build
+      - name: Test
+        if: steps.gate.outputs.run == 'true'
+        run: swift test
+      - name: SwiftFormat lint
+        if: steps.gate.outputs.run == 'true'
+        run: swiftformat Sources Tests --lint
+
+      # Flip ci-gated to the real outcome. `always()` so a failed build posts
+      # `failure` (merge stays blocked, checks UI explains why) instead of
+      # leaving a stale `pending`.
+      - name: Report ci-gated status
+        # `steps.gate.outcome == 'failure'` matters as much as `run == 'true'`:
+        # a gate step that ERRORS (rather than deciding run=false) leaves `run`
+        # empty, which skips every step below it — including this one — so
+        # `ci-gated` keeps whatever it had and the required status never
+        # resolves. The job is already failed in that case, so the branch below
+        # posts `failure` without further help.
+        if: >-
+          always() && github.event_name == 'pull_request' &&
+          (steps.gate.outputs.run == 'true' || steps.gate.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_FORK: ${{ steps.gate.outputs.is_fork }}
+          JOB_STATUS: ${{ job.status }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Fork PR: its token is read-only, so this POST would 403 and turn an
+          # otherwise-green run red. arm-gate deliberately posted nothing either, so
+          # `ci-gated` stays unreported and the merge stays blocked — the intended
+          # fork behaviour (chrischall/workflows#112).
+          if [ "$IS_FORK" = "true" ]; then
+            echo "fork PR → not posting ci-gated (read-only token). The job result above is the real one; the required ci-gated context stays unreported, so the merge stays blocked until a maintainer acts."
+            exit 0
+          fi
+          # job.status is one of success/failure/cancelled — a manual
+          # cancellation isn't a CI failure, so it gets its own commit
+          # status state+description instead of being lumped into "CI
+          # failed" (which would misleadingly send someone to the job log
+          # to debug a run nobody let finish).
+          case "$JOB_STATUS" in
+            success) STATE=success; DESC="CI passed" ;;
+            cancelled) STATE=error; DESC="CI cancelled" ;;
+            *) STATE=failure; DESC="CI failed — see the ci job log" ;;
+          esac
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
+            -f state="$STATE" -f context=ci-gated -f description="$DESC" >/dev/null
+          echo "ci-gated → $STATE"
