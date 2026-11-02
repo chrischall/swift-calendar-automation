@@ -123,6 +123,10 @@ public struct CalendarService: Sendable {
     ///   1. Explicit argument
     ///   2. `defaultCalendar` on the service
     ///   3. Error with the list of available calendars
+    ///
+    /// With a `recurrence` the event is a series, validated against
+    /// `startDate` in `timeZone` (the current zone when nil, and for an
+    /// all-day event, which stays floating) before anything is written.
     public func createEvent(
         title: String,
         startDate: Date,
@@ -130,10 +134,13 @@ public struct CalendarService: Sendable {
         calendarName: String?,
         location: String? = nil,
         notes: String? = nil,
-        isAllDay: Bool = false
+        isAllDay: Bool = false,
+        recurrence: Recurrence? = nil,
+        timeZone: TimeZone? = nil
     ) async throws -> String {
         let target = try await createTarget(
-            calendarName: calendarName, startDate: startDate, endDate: endDate, isAllDay: isAllDay
+            calendarName: calendarName, startDate: startDate, endDate: endDate, isAllDay: isAllDay,
+            recurrence: recurrence, timeZone: timeZone
         )
         return try await store.createEvent(
             title: title,
@@ -142,7 +149,9 @@ public struct CalendarService: Sendable {
             calendarName: target,
             location: location,
             notes: notes,
-            isAllDay: isAllDay
+            isAllDay: isAllDay,
+            recurrence: recurrence,
+            timeZone: timeZone
         )
     }
 
@@ -150,7 +159,8 @@ public struct CalendarService: Sendable {
     /// would write to. The confirmation preview runs this first, so a
     /// request that would fail is refused rather than approved.
     public func createTarget(
-        calendarName: String?, startDate: Date, endDate: Date, isAllDay: Bool
+        calendarName: String?, startDate: Date, endDate: Date, isAllDay: Bool,
+        recurrence: Recurrence? = nil, timeZone: TimeZone? = nil
     ) async throws -> String {
         // Both operands are real, parsed dates by the time they get here —
         // the tool layer fails parse errors before calling in. All-day
@@ -162,6 +172,9 @@ public struct CalendarService: Sendable {
                 start: startDate, end: endDate, isAllDay: isAllDay
             )
         }
+        try recurrence?.validate(
+            start: startDate, timeZone: Self.seriesZone(timeZone, isAllDay: isAllDay), isAllDay: isAllDay
+        )
         let resolved = calendarName?.trimmingCharacters(in: .whitespaces).nonEmpty
             ?? defaultCalendar?.trimmingCharacters(in: .whitespaces).nonEmpty
         let available = try await store.listCalendarNames()
@@ -175,6 +188,12 @@ public struct CalendarService: Sendable {
         return target
     }
 
+    /// The zone a series' rule is read in: the event's, or the current zone
+    /// for a floating (incl. every all-day) event. Shared with the store.
+    static func seriesZone(_ timeZone: TimeZone?, isAllDay: Bool) -> TimeZone {
+        isAllDay ? .current : timeZone ?? .current
+    }
+
     /// Throw what `updateEvent` would for moving `id` to `calendarName`
     /// (unknown calendar, another account), without changing anything.
     public func checkMove(id: String, toCalendar calendarName: String) async throws {
@@ -185,6 +204,10 @@ public struct CalendarService: Sendable {
     /// current calendar, the store is expected to perform a true reassign
     /// (EventKit supports this natively, unlike AppleScript). `nil` fields
     /// are preserved.
+    ///
+    /// `recurrence` changes the repeat rule; see
+    /// ``checkRecurrenceChange(id:recurrence:startDate:isAllDay:span:)`` for
+    /// what is refused. `.unchanged` (the default) costs nothing extra.
     public func updateEvent(
         id: String,
         title: String? = nil,
@@ -194,8 +217,12 @@ public struct CalendarService: Sendable {
         location: String? = nil,
         notes: String? = nil,
         isAllDay: Bool? = nil,
-        span: EventSpan = .thisEvent
+        span: EventSpan = .thisEvent,
+        recurrence: RecurrenceChange = .unchanged
     ) async throws {
+        try await checkRecurrenceChange(
+            id: id, recurrence: recurrence, startDate: startDate, isAllDay: isAllDay, span: span
+        )
         if let s = startDate, let e = endDate {
             // A nil `isAllDay` means "leave it as it is", so the inclusive-end
             // rule has to come from the event's *current* value rather than a
@@ -223,8 +250,34 @@ public struct CalendarService: Sendable {
             location: location,
             notes: notes,
             isAllDay: isAllDay,
-            span: span
+            span: span,
+            recurrence: recurrence
         )
+    }
+
+    /// Throw what `updateEvent` would for this repeat-rule change, without
+    /// changing anything — the confirmation preview runs it.
+    ///
+    /// - On an occurrence of a series, any change needs `span ==
+    ///   .futureEvents` (`EventStoreError.recurrenceChangeNeedsFutureEvents`).
+    /// - A new rule is validated against the start it will repeat from: the
+    ///   new `startDate` when given, else the occurrence's (or one-off
+    ///   event's) start, in the event's zone.
+    /// - `.unchanged` checks nothing and fetches nothing.
+    public func checkRecurrenceChange(
+        id: String, recurrence: RecurrenceChange, startDate: Date? = nil, isAllDay: Bool? = nil,
+        span: EventSpan
+    ) async throws {
+        guard recurrence != .unchanged else { return }
+        guard let current = try await store.event(id: id) else { throw EventStoreError.eventNotFound(id) }
+        if current.isRecurring, span != .futureEvents {
+            throw EventStoreError.recurrenceChangeNeedsFutureEvents(id)
+        }
+        if case let .set(rule) = recurrence {
+            let allDay = isAllDay ?? current.isAllDay
+            let zone = Self.seriesZone(current.timeZone.flatMap(TimeZone.init(identifier:)), isAllDay: allDay)
+            try rule.validate(start: startDate ?? current.startDate, timeZone: zone, isAllDay: allDay)
+        }
     }
 
     /// Delete a single event by id. Store-level errors (not authorized,
